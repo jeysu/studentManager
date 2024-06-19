@@ -1,12 +1,14 @@
 """Import required modules."""
 import pandas as pd
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QTableWidgetItem, QHeaderView
 from PyQt5.QtCore import pyqtSignal, QObject
 from PyQt5 import uic
 
 class Communicate(QObject):
     """Communicate with signal to update dataframe"""
     updateDataframe = pyqtSignal(pd.DataFrame)
+    updateCourseDataframe = pyqtSignal(pd.DataFrame)
+    deletedCourse = pyqtSignal(str)
 
 class mainWindow(QMainWindow):
     """Main window"""
@@ -41,22 +43,27 @@ class mainWindow(QMainWindow):
 
     def courseViewClicked(self):
         #Open course window
-        self.courseWindow = courseWindow(self.course_dataframe)
+        self.courseWindow = courseWindow(self.dataframe, self.course_dataframe)
         #Update dataframe
-        self.courseWindow.communicate.updateDataframe.connect(self.updateCourseDataframeSlot)
+        self.courseWindow.communicate.updateDataframe.connect(self.updateDataframeSlot)
+        self.courseWindow.communicate.updateCourseDataframe.connect(self.updateCourseDataframeSlot)
 
     def read(self):
-        #Output dataframe as html to text browser
+        # Clear QTableWidget textOutput
+        self.textOutput.setRowCount(0)
+        self.textOutput.setColumnCount(len(self.dataframe.columns))
+
+        # Populate QTableWidget with data
         for index, row in self.dataframe.iterrows():
-            course = row["course"]
-            # Check if course exists in course dataframe
-            if course not in self.course_dataframe["course_code"].tolist():
-                # If not found, set course value to "No Course" and enroll status to "No"
-                self.dataframe.loc[index, "course"] = "No Course"
-                self.dataframe.loc[index, "status"] = "No"
-        html_text = self.dataframe.to_html()
-        self.outputText.clear()
-        self.outputText.setHtml(html_text)
+            row_position = self.textOutput.rowCount()
+            self.textOutput.insertRow(row_position)
+
+            for i, data in enumerate(row):
+                item = QTableWidgetItem(str(data))
+                self.textOutput.setItem(row_position, i, item)
+
+        # Adjust column widths to content
+        self.textOutput.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
     def addClicked(self):
         #Opens add window
@@ -262,7 +269,7 @@ class editWindow(QMainWindow):
 
 class courseWindow(QMainWindow):
     """Course View Window"""
-    def __init__(self, course_dataframe):
+    def __init__(self, dataframe, course_dataframe):
         #Initialize Course Window UI
         super(courseWindow, self).__init__()
         uic.loadUi("courseWindow.ui", self)
@@ -274,6 +281,7 @@ class courseWindow(QMainWindow):
         self.editButton.clicked.connect(self.editClicked)
         self.saveButton.clicked.connect(self.saveClicked)
         self.course_dataframe = course_dataframe
+        self.dataframe = dataframe
 
         #Initialize child windows
         self.courseAddWindow = None
@@ -285,10 +293,21 @@ class courseWindow(QMainWindow):
         self.read()
 
     def read(self):
-        #Read course data and output as html to text browser
-        html_text = self.course_dataframe.to_html()
-        self.outputText.clear()
-        self.outputText.setHtml(html_text)
+        # Clear QTableWidget textOutput
+        self.textOutput.setRowCount(0)
+        self.textOutput.setColumnCount(len(self.course_dataframe.columns))
+
+        # Populate QTableWidget with data
+        for index, row in self.course_dataframe.iterrows():
+            row_position = self.textOutput.rowCount()
+            self.textOutput.insertRow(row_position)
+
+            for i, data in enumerate(row):
+                item = QTableWidgetItem(str(data))
+                self.textOutput.setItem(row_position, i, item)
+
+        # Adjust column widths to content
+        self.textOutput.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
     def addClicked(self):
         #Opens Add Course Window
@@ -301,12 +320,14 @@ class courseWindow(QMainWindow):
         self.courseDeleteWindow = courseDeleteWindow(self.course_dataframe)
         #Update course dataframe
         self.courseDeleteWindow.communicate.updateDataframe.connect(self.updateCourseDataframeSlot)
+        self.courseDeleteWindow.communicate.deletedCourse.connect(self.handleCourseDeletion)
 
     def editClicked(self):
-        #Opens Edit Course Window
-        self.courseEditWindow = courseEditWindow(self.course_dataframe)
-        #Update course dataframe
-        self.courseEditWindow.communicate.updateDataframe.connect(self.updateCourseDataframeSlot)
+        # Opens Edit Course Window
+        self.courseEditWindow = courseEditWindow(self.dataframe, self.course_dataframe)
+        # Update course dataframe
+        self.courseEditWindow.communicate.updateDataframe.connect(self.updateDataframeSlot)
+        self.courseEditWindow.communicate.updateCourseDataframe.connect(self.updateCourseDataframeSlot)
 
     def saveClicked(self):
         #Save course dataframe to csv
@@ -318,7 +339,25 @@ class courseWindow(QMainWindow):
         #Updates text browser with new course dataframe
         self.read()
         #Emit signal to update course dataframe in Main Window
-        self.communicate.updateDataframe.emit(self.course_dataframe)
+        self.communicate.updateCourseDataframe.emit(self.course_dataframe)
+
+    def updateDataframeSlot(self, new_dataframe):
+        # Update dataframe
+        self.dataframe = new_dataframe
+        #Updates text browser with new course dataframe
+        self.read()
+        #Emit signal to update course dataframe in Main Window
+        self.communicate.updateDataframe.emit(self.dataframe)
+
+    def handleCourseDeletion(self, deleted_course_code):
+        # Iterate over all rows in the dataframe
+        for index, row in self.dataframe.iterrows():
+            if row['course'] == deleted_course_code:
+                # Set the course field to "No Course" for all matching rows
+                self.dataframe.at[index, 'course'] = "No Course"
+                self.dataframe.at[index, 'status'] = "No"
+        # Emit signal to update the dataframe in the main window
+        self.communicate.updateDataframe.emit(self.dataframe)
 
 class courseAddWindow(QMainWindow):
     """Add Course Window"""
@@ -379,6 +418,7 @@ class courseDeleteWindow(QMainWindow):
             self.course_dataframe = self.course_dataframe.reset_index(drop=True)
             # Emit signal and close window
             self.communicate.updateDataframe.emit(self.course_dataframe)
+            self.communicate.deletedCourse.emit(course_to_delete)
             self.close()
         else:
             # Cancel deletion if no
@@ -387,7 +427,7 @@ class courseDeleteWindow(QMainWindow):
 class courseEditWindow(QMainWindow):
     """Edit Course Window"""
 
-    def __init__(self, course_dataframe):
+    def __init__(self, dataframe, course_dataframe):
         #Initialize Edit Course Window UI
         super(courseEditWindow, self).__init__()
         uic.loadUi("courseEditWindow.ui", self)
@@ -398,6 +438,7 @@ class courseEditWindow(QMainWindow):
         self.editButton.clicked.connect(self.editClicked)
 
         #Store course dataframe to local
+        self.dataframe = dataframe
         self.course_dataframe = course_dataframe
         #Communicate object
         self.communicate = Communicate()
@@ -423,13 +464,26 @@ class courseEditWindow(QMainWindow):
             message.exec()
 
     def editClicked(self):
-        #Logic to edit given course
+        # Logic to edit given course
         course_code = self.courseCodeInput.text()
         course_description = self.courseDescriptInput.text()
+
+        old_course_code = str(self.course_dataframe.loc[self.row_index, "course_code"].item())
+        new_course_code = self.courseCodeInput.text()
+        course_description = self.courseDescriptInput.text()
+
         self.course_dataframe.loc[self.row_index, "course_code"] = course_code
         self.course_dataframe.loc[self.row_index, "course_description"] = course_description
-        #Emit signal and close window
-        self.communicate.updateDataframe.emit(self.course_dataframe)
+
+        # Update course_dataframe
+        self.course_dataframe.loc[self.row_index, "course_code"] = new_course_code
+        self.course_dataframe.loc[self.row_index, "course_description"] = course_description
+
+        # Update references in dataframe
+        self.dataframe['course'] = self.dataframe['course'].replace(old_course_code, new_course_code)
+        # Emit signal and close window
+        self.communicate.updateDataframe.emit(self.dataframe)
+        self.communicate.updateCourseDataframe.emit(self.course_dataframe)
         self.close()
 
 def main():
